@@ -1,0 +1,59 @@
+﻿# Environment & Secrets
+.env
+.env.*
+*.env
+*.pem
+*.key
+
+# Operating System
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python & Backend
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Android & Gradle
+.gradle/
+build/
+app/build/
+*.apk
+*.aab
+local.properties
+.cxx/
+captures/
+output.json
+*.keystore
+*.jks
