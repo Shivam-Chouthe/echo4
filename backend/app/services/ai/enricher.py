@@ -1,115 +1,112 @@
+import asyncio
 import json
 import logging
-from typing import Optional, List
-from pydantic import BaseModel, Field
+from typing import Optional
 from google import genai
 from google.genai import types
-from app.services.extractors.url_unfurler import url_unfurler
+from google.genai.errors import APIError
 
 from app.core.config import settings
 from app.schemas.memory import (
+    MemoryCategory,
     MemoryEnrichRequest,
     MemoryEnrichResponse,
-    MemoryCategory,
     TargetPlace,
 )
+from app.services.extractors.url_unfurler import URLUnfurler
 
 logger = logging.getLogger(__name__)
 
+CANDIDATE_MODELS = [
+    settings.GEMINI_MODEL,
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+]
 
-class AIEnrichedMemory(BaseModel):
-    category: MemoryCategory = Field(description="One of PLACE, EVENT, RECIPE, TOOL, TOPIC, PRODUCT, OTHER")
-    title: str = Field(description="Short meaningful title, max 6 words")
-    summary: str = Field(description="Concise 1-2 sentence breakdown")
-    intent: str = Field(description="Actionable user intention, e.g., 'Visit this cafe'")
-    keywords: List[str] = Field(description="3-6 relevant search tags")
-    target_place: Optional[TargetPlace] = Field(
-        default=None,
-        description="Location name and coordinates if category is PLACE, otherwise null",
-    )
+unfurler_service = URLUnfurler()
 
 
-SYSTEM_PROMPT = """
-You are the AI extraction engine for Echo, an app capturing user intentions from shared mobile content.
-Analyze the user's captured content and extract:
-1. category: One of [PLACE, EVENT, RECIPE, TOOL, TOPIC, PRODUCT, OTHER]
-2. title: Short, meaningful title (max 6 words).
-3. summary: Concise 1-2 sentence breakdown.
-4. intent: Actionable user intention (e.g., 'Visit this cafe', 'Read this article', 'Try this library').
-5. keywords: 3-6 relevant search tags.
-6. target_place: If category is PLACE, extract the place name and estimate coordinates (latitude/longitude) if identifiable. Otherwise null.
-"""
-
-
-class GeminiEnricher:
+class EnricherService:
     def __init__(self):
-        self.client = None
-        if settings.GEMINI_API_KEY:
-            self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
-
-    def _fallback_response(self, request: MemoryEnrichRequest) -> MemoryEnrichResponse:
-        return MemoryEnrichResponse(
-            client_id=request.client_id,
-            category=MemoryCategory.OTHER,
-            title=request.raw_content[:30].strip() or "Saved Memory",
-            summary=request.raw_content[:100],
-            intent="Review saved item",
-            keywords=["review"],
-            target_place=None,
-            status="ENRICHED",
-        )
+        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
     async def enrich(self, request: MemoryEnrichRequest) -> MemoryEnrichResponse:
-        if not self.client:
-            logger.warning("GEMINI_API_KEY not configured. Falling back to default enrichment.")
-            return self._fallback_response(request)
+        content_to_analyze = request.raw_content
 
-        # Unfurl link metadata if URL is available
-        unfurl_target = request.source_url or url_unfurler.extract_first_url(request.raw_content)
-        metadata_context = ""
-        if unfurl_target:
-            metadata = await url_unfurler.fetch_metadata(unfurl_target)
-            details = []
-            if metadata.title:
-                details.append(f"Webpage Title: {metadata.title}")
-            if metadata.description:
-                details.append(f"Webpage Description: {metadata.description}")
-            if metadata.site_name:
-                details.append(f"Platform: {metadata.site_name}")
-            if details:
-                metadata_context = "\nExtracted Web Metadata:\n" + "\n".join(details)
+        # 1. Unfurl metadata using the correct fetch_metadata method
+        if request.source_url or "http" in request.raw_content:
+            url = request.source_url or unfurler_service.extract_first_url(request.raw_content)
+            if url:
+                metadata = await unfurler_service.fetch_metadata(url)
+                if metadata and metadata.title:
+                    content_to_analyze = (
+                        f"Original Content: {request.raw_content}\n"
+                        f"URL: {url}\n"
+                        f"Page Title: {metadata.title}\n"
+                        f"Description: {metadata.description or ''}\n"
+                        f"Site: {metadata.site_name or ''}"
+                    )
 
-        prompt = f"""
-Source Type: {request.source_type}
-Source URL: {request.source_url or 'N/A'}
-Captured Content:
-{request.raw_content}
-{metadata_context}
-"""
-        try:
-            response = self.client.models.generate_content(
-                model=settings.GEMINI_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    response_mime_type="application/json",
-                    response_schema=AIEnrichedMemory,
-                ),
-            )
-            ai_data = json.loads(response.text)
-            return MemoryEnrichResponse(
-                client_id=request.client_id,
-                category=ai_data.get("category", MemoryCategory.OTHER),
-                title=ai_data.get("title", "Saved Memory"),
-                summary=ai_data.get("summary", request.raw_content[:100]),
-                intent=ai_data.get("intent", "Review saved item"),
-                keywords=ai_data.get("keywords", []),
-                target_place=ai_data.get("target_place"),
-                status="ENRICHED",
-            )
-        except Exception as exc:
-            logger.error("Gemini enrichment failed: %s", exc, exc_info=True)
-            return self._fallback_response(request)
+        prompt = (
+            "Analyze the captured content and extract structured memory fields.\n"
+            f"client_id must be: \"{request.client_id}\"\n"
+            "Identify category (PLACE, EVENT, RECIPE, TOOL, TOPIC, PRODUCT, OTHER).\n"
+            "Summarize in 1-2 sentences. Keep title under 6 words.\n"
+            "Extract 3-5 keywords. If category is PLACE, extract target place name and approximate coordinates.\n\n"
+            f"Content:\n{content_to_analyze}"
+        )
+
+        # 2. Try candidate models with fallback backoff
+        for model_name in CANDIDATE_MODELS:
+            for attempt in range(2):
+                try:
+                    logger.info("Attempting enrichment with %s (attempt %d)", model_name, attempt + 1)
+                    response = await asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=MemoryEnrichResponse,
+                            temperature=0.2,
+                        ),
+                    )
+                    parsed_json = json.loads(response.text)
+                    parsed_json["client_id"] = request.client_id
+                    return MemoryEnrichResponse(**parsed_json)
+                except (APIError, Exception) as exc:
+                    logger.warning("Model %s failed attempt %d: %s", model_name, attempt + 1, exc)
+                    await asyncio.sleep(1.0)
+                    break
+
+        logger.error("Gemini models unavailable. Executing deterministic fallback.")
+        return self._heuristic_fallback(request)
+
+    def _heuristic_fallback(self, request: MemoryEnrichRequest) -> MemoryEnrichResponse:
+        clean_text = request.raw_content.strip()
+        first_line = clean_text.split("\n")[0][:40]
+
+        lowered = clean_text.lower()
+        if any(w in lowered for w in ["cafe", "restaurant", "palace", "visit", "hotel", "street"]):
+            category = MemoryCategory.PLACE
+        elif any(w in lowered for w in ["recipe", "cook", "bake", "soup", "curry", "ingredients"]):
+            category = MemoryCategory.RECIPE
+        elif any(w in lowered for w in ["tool", "library", "sdk", "github", "package"]):
+            category = MemoryCategory.TOOL
+        else:
+            category = MemoryCategory.TOPIC
+
+        words = [w.strip(".,!?:") for w in clean_text.split() if len(w) > 4][:5]
+
+        return MemoryEnrichResponse(
+            client_id=request.client_id,
+            category=category,
+            title=first_line if first_line else "Captured Memory",
+            summary=clean_text[:160],
+            intent="Review saved content",
+            keywords=words,
+            target_place=None,
+        )
 
 
-enricher_service = GeminiEnricher()
+enricher_service = EnricherService()
