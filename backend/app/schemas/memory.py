@@ -45,3 +45,8 @@ class MemoryEnrichResponse(BaseModel):
     keywords: List[str] = []
     target_place: Optional[TargetPlace] = None
     status: str = "ENRICHED"
+
+class MemoryIngestResponse(BaseModel):
+    client_id: str
+    status: str = "PENDING"
+    message: str = "Memory ingestion scheduled for processing"

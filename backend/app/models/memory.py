@@ -14,14 +14,14 @@ class MemoryRecord(SQLModel, table=True):
     source_type: str = "TEXT"
     client_timestamp: int
 
-    # AI Extracted fields
-    category: str = Field(index=True)
-    title: str
-    summary: str
-    intent: str
+    # Nullable fields while in PENDING state
+    category: Optional[str] = Field(default=None, index=True, nullable=True)
+    title: Optional[str] = Field(default=None, nullable=True)
+    summary: Optional[str] = Field(default=None, nullable=True)
+    intent: Optional[str] = Field(default=None, nullable=True)
     keywords_json: str = Field(default="[]")
-    target_place_json: Optional[str] = None
-    status: str = "ENRICHED"
+    target_place_json: Optional[str] = Field(default=None, nullable=True)
+    status: str = "PENDING"  # PENDING, ENRICHED, FAILED
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
