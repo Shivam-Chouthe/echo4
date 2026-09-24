@@ -1,7 +1,16 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.db.session import init_db
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Create tables on startup if they don't exist
+    init_db()
+    yield
 
 
 def create_app() -> FastAPI:
@@ -10,6 +19,7 @@ def create_app() -> FastAPI:
         version=settings.VERSION,
         openapi_url=f"{settings.API_V1_STR}/openapi.json",
         docs_url=f"{settings.API_V1_STR}/docs",
+        lifespan=lifespan,
     )
 
     if settings.BACKEND_CORS_ORIGINS:
