@@ -1,3 +1,13 @@
+from sqlalchemy import func
+from app.schemas.memory import (
+    MemoryEnrichRequest,
+    MemoryEnrichResponse,
+    MemoryIngestResponse,
+    MemoryListItem,
+    MemoryListResponse,
+    MemoryCategory,
+)
+
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -117,6 +127,72 @@ async def enrich_memory(
     db.add(record)
     db.commit()
     return enriched
+
+
+@router.get(
+    "/memories",
+    response_model=MemoryListResponse,
+    tags=["Memories"],
+    summary="List stored memories with optional filtering and pagination",
+)
+async def list_memories(
+    category: Optional[MemoryCategory] = None,
+    status: Optional[str] = None,
+    query: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> MemoryListResponse:
+    base_query = select(MemoryRecord)
+
+    if category:
+        base_query = base_query.where(MemoryRecord.category == category.value)
+    if status:
+        base_query = base_query.where(MemoryRecord.status == status)
+    if query:
+        search_pattern = f"%{query}%"
+        base_query = base_query.where(
+            (MemoryRecord.title.ilike(search_pattern))
+            | (MemoryRecord.summary.ilike(search_pattern))
+            | (MemoryRecord.raw_content.ilike(search_pattern))
+        )
+
+    # Count total matching records
+    total = db.exec(select(func.count()).select_from(base_query.subquery())).one()
+
+    # Order newest first and apply pagination
+    paginated_query = (
+        base_query.order_by(MemoryRecord.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    records = db.exec(paginated_query).all()
+
+    items = [
+        MemoryListItem(
+            client_id=r.client_id,
+            category=r.category,
+            title=r.title,
+            summary=r.summary,
+            intent=r.intent,
+            keywords=r.keywords,
+            target_place=r.target_place,
+            status=r.status,
+            source_type=r.source_type,
+            source_url=r.source_url,
+            client_timestamp=r.client_timestamp,
+            created_at=r.created_at,
+        )
+        for r in records
+    ]
+
+    return MemoryListResponse(
+        total=total,
+        items=items,
+        limit=limit,
+        offset=offset,
+    )
+
 
 
 @router.get(
