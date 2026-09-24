@@ -1,0 +1,21 @@
+services:
+  echo-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: echo-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PROJECT_NAME=Echo Backend
+      - API_V1_STR=/api/v1
+      - GEMINI_MODEL=gemini-3.6-flash
+      # Read GEMINI_API_KEY from host environment or .env
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      # Mount data directory so the SQLite database persists across container restarts
+      - echo_data:/app
+    restart: unless-stopped
+
+volumes:
+  echo_data:
