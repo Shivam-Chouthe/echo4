@@ -4,6 +4,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
+from app.services.extractors.url_unfurler import url_unfurler
 
 from app.core.config import settings
 from app.schemas.memory import (
@@ -63,11 +64,27 @@ class GeminiEnricher:
             logger.warning("GEMINI_API_KEY not configured. Falling back to default enrichment.")
             return self._fallback_response(request)
 
+        # Unfurl link metadata if URL is available
+        unfurl_target = request.source_url or url_unfurler.extract_first_url(request.raw_content)
+        metadata_context = ""
+        if unfurl_target:
+            metadata = await url_unfurler.fetch_metadata(unfurl_target)
+            details = []
+            if metadata.title:
+                details.append(f"Webpage Title: {metadata.title}")
+            if metadata.description:
+                details.append(f"Webpage Description: {metadata.description}")
+            if metadata.site_name:
+                details.append(f"Platform: {metadata.site_name}")
+            if details:
+                metadata_context = "\nExtracted Web Metadata:\n" + "\n".join(details)
+
         prompt = f"""
 Source Type: {request.source_type}
 Source URL: {request.source_url or 'N/A'}
-Content:
+Captured Content:
 {request.raw_content}
+{metadata_context}
 """
         try:
             response = self.client.models.generate_content(
