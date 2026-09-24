@@ -17,10 +17,11 @@ from app.services.extractors.url_unfurler import URLUnfurler
 
 logger = logging.getLogger(__name__)
 
+# Active, supported Gemini models
 CANDIDATE_MODELS = [
-    settings.GEMINI_MODEL,
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
+    settings.GEMINI_MODEL,       # your configured default (e.g. gemini-3.5-flash or gemini-3.6-flash)
+    "gemini-3.5-flash",
+    "gemini-3.5-pro",
 ]
 
 unfurler_service = URLUnfurler()
@@ -73,6 +74,7 @@ class EnricherService:
                     )
                     parsed_json = json.loads(response.text)
                     parsed_json["client_id"] = request.client_id
+                    parsed_json["status"] = "ENRICHED"  # Force lifecycle status
                     return MemoryEnrichResponse(**parsed_json)
                 except (APIError, Exception) as exc:
                     logger.warning("Model %s failed attempt %d: %s", model_name, attempt + 1, exc)
@@ -106,6 +108,7 @@ class EnricherService:
             intent="Review saved content",
             keywords=words,
             target_place=None,
+            status="ENRICHED",
         )
 
 

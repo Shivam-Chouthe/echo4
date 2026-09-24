@@ -122,7 +122,7 @@ async def enrich_memory(
     record.target_place = (
         enriched.target_place.model_dump() if enriched.target_place else None
     )
-    record.status = enriched.status
+    record.status = "ENRICHED"
 
     db.add(record)
     db.commit()
