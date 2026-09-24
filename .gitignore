@@ -57,3 +57,6 @@ captures/
 output.json
 *.keystore
 *.jks
+
+*.db
+*.sqlite3
